@@ -103,12 +103,12 @@ def parse_dates(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
 
 # ── Page setup ────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="FAM Enrollment Dashboard",
+    page_title="PRISM FAM Enrollment Dashboard",
     page_icon="🥗",
     layout="wide",
 )
 
-st.title("🥗 Food As Medicine (FAM) Enrollment")
+st.title("🥗 PRISM Food As Medicine (FAM) Enrollment")
 st.caption("PRISM Members · Digbi Health · Live data via Iterable")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -118,8 +118,6 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
     st.caption("Data cached for 30 min.")
-    st.divider()
-    st.metric("April 2026 Target", f"{APRIL_TARGET:,}")
 
 # ── Data fetch ────────────────────────────────────────────────────────────────
 with st.spinner("Fetching PRISM member list…"):
@@ -150,7 +148,12 @@ else:
     df_chart  = df_enrolled.copy()
     has_dates = False
 
+# ── Normalize gender values ───────────────────────────────────────────────────
+if "gender" in df_chart.columns:
+    df_chart["gender"] = df_chart["gender"].replace({"M": "Male", "F": "Female"})
+
 # ── KPI calculations ──────────────────────────────────────────────────────────
+glp1_enrolled   = max(total_prism - fam_enrolled_count, 0)
 enrollment_rate = (fam_enrolled_count / total_prism * 100) if total_prism > 0 else 0.0
 
 today       = pd.Timestamp.today().normalize()
@@ -171,29 +174,28 @@ expected_velocity    = remaining_to_target / days_left if days_left > 0 else 0.0
 
 # ── KPI Row 1 ─────────────────────────────────────────────────────────────────
 st.subheader("Key Metrics")
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Total PRISM Members",   f"{total_prism:,}")
-c2.metric("FAM Enrolled",          f"{fam_enrolled_count:,}")
-c3.metric("Enrollment Rate",       f"{enrollment_rate:.1f}%")
-c4.metric("April 2026 Enrolled",   f"{april_enrolled:,}",
-          delta=f"{april_enrolled - APRIL_TARGET:+,} vs target")
-c5.metric("April Target Progress", f"{april_pct:.1f}%")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Enrolled PRISM Members", f"{total_prism:,}")
+c2.metric("FAM Enrolled",           f"{fam_enrolled_count:,}")
+c3.metric("GLP-1 Enrolled",         f"{glp1_enrolled:,}")
+c4.metric("FAM Enrollment %",       f"{enrollment_rate:.1f}%")
 
-# ── KPI Row 2 — Velocity ──────────────────────────────────────────────────────
+# ── KPI Row 2 — April + Velocity ──────────────────────────────────────────────
 st.divider()
-cv1, cv2, cv3 = st.columns(3)
-cv1.metric(
+r2c1, r2c2, r2c3, r2c4, r2c5, r2c6 = st.columns(6)
+r2c1.metric("FAM April 2026 Enrolled",   f"{april_enrolled:,}",
+            delta=f"{april_enrolled - APRIL_TARGET:+,} vs target")
+r2c2.metric("April 2026 Target",         f"{APRIL_TARGET:,}")
+r2c3.metric("FAM April Target Progress", f"{april_pct:.1f}%")
+r2c4.metric(
     f"{today.strftime('%B')} Enrollment Velocity",
     f"{current_velocity:.1f} / day",
 )
-cv2.metric(
+r2c5.metric(
     "Velocity Needed to Hit Target",
     f"{expected_velocity:.1f} / day",
 )
-cv3.metric(
-    "Days Left in April",
-    f"{days_left}",
-)
+r2c6.metric("Days Left in April", f"{days_left}")
 
 # ── Charts ────────────────────────────────────────────────────────────────────
 st.divider()
@@ -334,6 +336,67 @@ else:
             st.plotly_chart(fig_gen, use_container_width=True)
         else:
             st.info("No gender data available.")
+
+# ── Enrollment Tables ─────────────────────────────────────────────────────────
+st.divider()
+st.subheader("Enrollment Detail Tables")
+
+if not has_dates or len(df_chart) == 0:
+    st.info("No enrollment date data available for tables.")
+else:
+    tbl_day, tbl_month = st.tabs(["📅 By Day", "📆 By Month"])
+
+    with tbl_day:
+        # Current month only for the day table, matching the reference
+        current_month_start = today.replace(day=1)
+        df_this_month = df_chart[df_chart["date"] >= current_month_start].copy()
+
+        if len(df_this_month) > 0:
+            daily_tbl = (
+                df_this_month.groupby("date")
+                .size()
+                .reset_index(name="Enrollments")
+                .sort_values("date")
+            )
+            # Running cumulative across the full dataset, not just current month
+            full_daily = (
+                df_chart.groupby("date")
+                .size()
+                .reset_index(name="cnt")
+                .sort_values("date")
+            )
+            full_daily["cum"] = full_daily["cnt"].cumsum()
+            cum_map = full_daily.set_index("date")["cum"].to_dict()
+
+            daily_tbl["Cumulative Total"] = daily_tbl["date"].map(cum_map)
+            daily_tbl["Day"] = daily_tbl["date"].dt.strftime("%A, %b %d")
+            daily_tbl = daily_tbl[["Day", "Enrollments", "Cumulative Total"]]
+
+            st.markdown(f"#### 📅 {today.strftime('%B %Y')} Enrollments by Day")
+            st.dataframe(
+                daily_tbl,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info(f"No enrollments recorded yet for {today.strftime('%B %Y')}.")
+
+    with tbl_month:
+        monthly_tbl = (
+            df_chart.groupby("month")
+            .size()
+            .reset_index(name="Enrollments")
+            .sort_values("month")
+        )
+        monthly_tbl["Cumulative Total"] = monthly_tbl["Enrollments"].cumsum()
+        monthly_tbl = monthly_tbl.rename(columns={"month": "Month"})
+
+        st.markdown("#### 📆 Enrollments by Month")
+        st.dataframe(
+            monthly_tbl,
+            use_container_width=True,
+            hide_index=True,
+        )
 
 # ── Raw data expander ─────────────────────────────────────────────────────────
 with st.expander("🔍 View Raw Enrollment Data"):
