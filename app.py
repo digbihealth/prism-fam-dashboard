@@ -253,12 +253,14 @@ if has_dates and has_prism_dates:
         y=monthly_combined["Total PRISM Enrollments"],
         name="Total PRISM Enrollments",
         marker_color="#4C8BE0",
+        hovertemplate="Total, %{y:,}<extra></extra>",
     ))
     fig_compare.add_trace(go.Bar(
         x=monthly_combined["month"],
         y=monthly_combined["FAM Enrollments"],
         name="FAM Enrollments",
         marker_color="#2ECC71",
+        hovertemplate="FAM, %{y:,}<extra></extra>",
     ))
     fig_compare.update_layout(
         barmode="group",
