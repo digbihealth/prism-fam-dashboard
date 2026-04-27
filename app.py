@@ -12,9 +12,11 @@ FAM_LIST_ID    = 9511991   # FAM-enrolled PRISM members
 PRISM_LIST_ID  = 9518831   # All PRISM members (denominator)
 CUTOFF_DATE    = pd.Timestamp("2025-12-20")
 APRIL_START    = pd.Timestamp("2026-04-01")
+YEAR_2026_START = pd.Timestamp("2026-01-01")
 APRIL_TARGET   = 200
 
-FIELDS = ("enrollmentDate", "companyName", "employeeOrDependent", "gender")
+FIELDS       = ("enrollmentDate", "companyName", "employeeOrDependent", "gender")
+PRISM_FIELDS = ("enrollmentDate", "companyName")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_headers():
@@ -48,7 +50,7 @@ def fetch_list_emails(list_id: int) -> list:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_user_fields(emails: tuple, fields: tuple) -> list:
+def fetch_user_fields(emails: tuple, fields: tuple, label: str = "member profiles") -> list:
     """Fetch profile fields for each email using threaded GET /users/{email}."""
     headers   = get_headers()
     email_list = list(emails)
@@ -56,7 +58,7 @@ def fetch_user_fields(emails: tuple, fields: tuple) -> list:
     lock      = threading.Lock()
     completed = [0]
 
-    progress = st.progress(0, text="Loading FAM member profiles…")
+    progress = st.progress(0, text=f"Loading {label}…")
 
     def fetch_one(email):
         try:
@@ -85,7 +87,7 @@ def fetch_user_fields(emails: tuple, fields: tuple) -> list:
                 pct = completed[0] / len(email_list)
                 progress.progress(
                     pct,
-                    text=f"Loading FAM member profiles… {completed[0]:,}/{len(email_list):,}",
+                    text=f"Loading {label}… {completed[0]:,}/{len(email_list):,}",
                 )
     progress.empty()
     return results
@@ -128,10 +130,14 @@ with st.spinner("Fetching FAM enrolled list…"):
     fam_emails       = fetch_list_emails(FAM_LIST_ID)
     fam_enrolled_count = len(fam_emails)
 
-user_data = fetch_user_fields(tuple(fam_emails), FIELDS)
+# FAM member profiles (full fields)
+fam_user_data = fetch_user_fields(tuple(fam_emails), FIELDS, label="FAM member profiles")
 
-# ── Parse & filter ────────────────────────────────────────────────────────────
-df_enrolled = pd.DataFrame(user_data)
+# PRISM member profiles (enrollment date + company for comparison charts)
+prism_user_data = fetch_user_fields(tuple(prism_emails), PRISM_FIELDS, label="PRISM member profiles")
+
+# ── Parse & filter — FAM ──────────────────────────────────────────────────────
+df_enrolled = pd.DataFrame(fam_user_data)
 
 has_date_col = (
     "enrollmentDate" in df_enrolled.columns
@@ -147,6 +153,24 @@ if has_date_col:
 else:
     df_chart  = df_enrolled.copy()
     has_dates = False
+
+# ── Parse & filter — PRISM (all members) ──────────────────────────────────────
+df_prism_all = pd.DataFrame(prism_user_data)
+
+has_prism_date_col = (
+    "enrollmentDate" in df_prism_all.columns
+    and df_prism_all["enrollmentDate"].notna().any()
+)
+
+if has_prism_date_col:
+    df_prism_all = parse_dates(df_prism_all, "enrollmentDate")
+    df_prism_chart = df_prism_all[
+        df_prism_all["date"].notna() & (df_prism_all["date"] >= CUTOFF_DATE)
+    ].copy()
+    has_prism_dates = len(df_prism_chart) > 0
+else:
+    df_prism_chart = df_prism_all.copy()
+    has_prism_dates = False
 
 # ── Normalize gender values ───────────────────────────────────────────────────
 if "gender" in df_chart.columns:
@@ -197,6 +221,81 @@ r2c5.metric(
 )
 r2c6.metric("Days Left in April", f"{days_left}")
 
+# ── FAM vs. Total PRISM Enrollment Trends (2026) ──────────────────────────────
+st.divider()
+st.subheader("FAM vs. Total PRISM Enrollment Trends (2026)")
+
+if has_dates and has_prism_dates:
+    # Filter both datasets to 2026 only
+    df_fam_2026   = df_chart[df_chart["date"] >= YEAR_2026_START].copy()
+    df_prism_2026 = df_prism_chart[df_prism_chart["date"] >= YEAR_2026_START].copy()
+
+    # Monthly counts
+    fam_monthly = (
+        df_fam_2026.groupby("month").size().reset_index(name="FAM Enrollments")
+    )
+    prism_monthly = (
+        df_prism_2026.groupby("month").size().reset_index(name="Total PRISM Enrollments")
+    )
+
+    monthly_combined = pd.merge(prism_monthly, fam_monthly, on="month", how="outer").fillna(0)
+    monthly_combined = monthly_combined.sort_values("month")
+    monthly_combined["FAM Enrollments"]          = monthly_combined["FAM Enrollments"].astype(int)
+    monthly_combined["Total PRISM Enrollments"]  = monthly_combined["Total PRISM Enrollments"].astype(int)
+    monthly_combined["FAM % of Total"]           = (
+        monthly_combined["FAM Enrollments"] / monthly_combined["Total PRISM Enrollments"].replace(0, pd.NA) * 100
+    ).round(1)
+
+    # ── Chart 1: Grouped bar — FAM vs Total ──────────────────────────────────
+    fig_compare = go.Figure()
+    fig_compare.add_trace(go.Bar(
+        x=monthly_combined["month"],
+        y=monthly_combined["Total PRISM Enrollments"],
+        name="Total PRISM Enrollments",
+        marker_color="#4C8BE0",
+    ))
+    fig_compare.add_trace(go.Bar(
+        x=monthly_combined["month"],
+        y=monthly_combined["FAM Enrollments"],
+        name="FAM Enrollments",
+        marker_color="#2ECC71",
+    ))
+    fig_compare.update_layout(
+        barmode="group",
+        title="Monthly Enrollments — FAM vs. Total PRISM (2026)",
+        xaxis_title="Month",
+        yaxis_title="Enrollments",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_compare, use_container_width=True)
+
+    # ── Chart 2: Line chart — FAM % of Total ──────────────────────────────────
+    fig_pct = go.Figure()
+    fig_pct.add_trace(go.Scatter(
+        x=monthly_combined["month"],
+        y=monthly_combined["FAM % of Total"],
+        mode="lines+markers+text",
+        name="FAM % of Total",
+        line=dict(color="#E67E22", width=3),
+        marker=dict(size=8),
+        text=monthly_combined["FAM % of Total"].apply(lambda v: f"{v:.1f}%" if pd.notna(v) else ""),
+        textposition="top center",
+    ))
+    fig_pct.update_layout(
+        title="FAM Enrollments as % of Total PRISM Enrollments by Month (2026)",
+        xaxis_title="Month",
+        yaxis_title="FAM % of Total Enrollments",
+        yaxis=dict(ticksuffix="%"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_pct, use_container_width=True)
+
+else:
+    st.info("Enrollment date data not available for one or both lists — comparison charts unavailable.")
+
 # ── FAM Enrollment Detail Tables ─────────────────────────────────────────────
 st.divider()
 st.subheader("FAM Enrollment Detail Tables")
@@ -204,7 +303,7 @@ st.subheader("FAM Enrollment Detail Tables")
 if not has_dates or len(df_chart) == 0:
     st.info("No enrollment date data available for tables.")
 else:
-    tbl_day, tbl_month = st.tabs(["📅 By Day", "📆 By Month"])
+    tbl_day, tbl_month, tbl_company = st.tabs(["📅 By Day", "📆 By Month", "🏢 By Company"])
 
     with tbl_day:
         current_month_start = today.replace(day=1)
@@ -247,6 +346,52 @@ else:
 
         st.markdown("#### 📆 FAM Enrollments by Month")
         st.dataframe(monthly_tbl, use_container_width=True, hide_index=True)
+
+    with tbl_company:
+        st.markdown(f"#### 🏢 {today.strftime('%B %Y')} FAM Enrollments by Company")
+        st.caption("Compares current-month FAM enrollments to total PRISM members from each company.")
+
+        current_month_start = today.replace(day=1)
+
+        # Current-month FAM by company
+        df_fam_month = df_chart[df_chart["date"] >= current_month_start].copy()
+
+        if "companyName" in df_fam_month.columns:
+            fam_by_company = (
+                df_fam_month[df_fam_month["companyName"].notna() & (df_fam_month["companyName"] != "")]
+                .groupby("companyName")
+                .size()
+                .reset_index(name="FAM Enrollments (This Month)")
+            )
+
+            # Total PRISM by company (all time from PRISM list)
+            if "companyName" in df_prism_all.columns:
+                prism_by_company = (
+                    df_prism_all[df_prism_all["companyName"].notna() & (df_prism_all["companyName"] != "")]
+                    .groupby("companyName")
+                    .size()
+                    .reset_index(name="Total PRISM Enrolled")
+                )
+                company_tbl = pd.merge(
+                    fam_by_company, prism_by_company, on="companyName", how="left"
+                ).fillna(0)
+                company_tbl["Total PRISM Enrolled"] = company_tbl["Total PRISM Enrolled"].astype(int)
+                company_tbl["FAM % of Company"] = (
+                    company_tbl["FAM Enrollments (This Month)"] /
+                    company_tbl["Total PRISM Enrolled"].replace(0, pd.NA) * 100
+                ).round(1).apply(lambda v: f"{v:.1f}%" if pd.notna(v) else "—")
+            else:
+                company_tbl = fam_by_company.copy()
+                company_tbl["Total PRISM Enrolled"] = "—"
+                company_tbl["FAM % of Company"]     = "—"
+
+            company_tbl = company_tbl.sort_values(
+                "FAM Enrollments (This Month)", ascending=False
+            ).rename(columns={"companyName": "Company"})
+
+            st.dataframe(company_tbl, use_container_width=True, hide_index=True)
+        else:
+            st.info("Company name data not available for FAM members this month.")
 
 # ── FAM Enrollment Trends & Breakdowns ───────────────────────────────────────
 st.divider()
