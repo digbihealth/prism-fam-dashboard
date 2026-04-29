@@ -337,17 +337,34 @@ else:
             st.info(f"No enrollments recorded yet for {today.strftime('%B %Y')}.")
 
     with tbl_month:
-        monthly_tbl = (
+        fam_monthly_tbl = (
             df_chart.groupby("month")
             .size()
-            .reset_index(name="Enrollments")
+            .reset_index(name="FAM Enrollments")
             .sort_values("month")
         )
-        monthly_tbl["Cumulative Total"] = monthly_tbl["Enrollments"].cumsum()
-        monthly_tbl = monthly_tbl.rename(columns={"month": "Month"})
+
+        if has_prism_dates:
+            prism_monthly_tbl = (
+                df_prism_chart.groupby("month")
+                .size()
+                .reset_index(name="Total Enrollments")
+            )
+            monthly_tbl = pd.merge(fam_monthly_tbl, prism_monthly_tbl, on="month", how="left").fillna(0)
+            monthly_tbl["Total Enrollments"] = monthly_tbl["Total Enrollments"].astype(int)
+        else:
+            monthly_tbl = fam_monthly_tbl.copy()
+            monthly_tbl["Total Enrollments"] = "—"
+
+        monthly_tbl["FAM %"] = (
+            monthly_tbl["FAM Enrollments"] /
+            monthly_tbl["Total Enrollments"].replace(0, pd.NA) * 100
+        ).round(1).apply(lambda v: f"{v:.1f}%" if pd.notna(v) else "—")
+
+        monthly_tbl = monthly_tbl.sort_values("month").rename(columns={"month": "Month"})
 
         st.markdown("#### 📆 FAM Enrollments by Month")
-        st.dataframe(monthly_tbl, use_container_width=True, hide_index=True)
+        st.dataframe(monthly_tbl[["Month", "FAM Enrollments", "Total Enrollments", "FAM %"]], use_container_width=True, hide_index=True)
 
     with tbl_company:
         st.markdown(f"#### 🏢 {today.strftime('%B %Y')} FAM Enrollments by Company")
