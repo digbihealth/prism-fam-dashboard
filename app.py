@@ -17,6 +17,7 @@ APRIL_START   = pd.Timestamp("2026-04-01")
 # Add monthly targets here as new campaign months are defined
 MONTHLY_TARGETS = {
     "2026-04": 200,
+    "2026-05": 150,
 }
 
 FAM_FIELDS = ("enrollmentDate", "companyName", "employeeOrDependent", "gender")
@@ -238,12 +239,15 @@ april_velocity = april_enrolled / 30  # April has 30 days
 april_pct      = (april_enrolled / april_target * 100) if april_target else None
 
 # Current month
-days_passed       = max((today - month_start).days, 1)
-days_in_month     = pd.Period(today, "M").days_in_month
-month_enrollments = int((df_chart["date"] >= month_start).sum()) if has_dates else 0
-current_velocity  = month_enrollments / days_passed
-current_target    = MONTHLY_TARGETS.get(month_str, None)
-current_pct       = (month_enrollments / current_target * 100) if current_target else None
+days_passed           = max((today - month_start).days, 1)
+days_in_month         = pd.Period(today, "M").days_in_month
+days_left             = max(days_in_month - today.day, 1)
+month_enrollments     = int((df_chart["date"] >= month_start).sum()) if has_dates else 0
+current_velocity      = month_enrollments / days_passed
+current_target        = MONTHLY_TARGETS.get(month_str, None)
+current_pct           = (month_enrollments / current_target * 100) if current_target else None
+remaining_to_target   = max(current_target - month_enrollments, 0) if current_target else None
+velocity_needed       = (remaining_to_target / days_left) if remaining_to_target is not None else None
 
 # ── KPI Row 1 — Overall ───────────────────────────────────────────────────────
 st.subheader("Key Metrics")
@@ -266,7 +270,7 @@ a4.metric("FAM Velocity Apr",      f"{april_velocity:.1f} / day")
 if month_str != APRIL_MONTH:
     st.divider()
     st.caption(f"📅 {month_label} — Current Month")
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric(f"{today.strftime('%b')} Target",
               f"{current_target:,}" if current_target else "—")
     m2.metric(f"FAM {today.strftime('%b %Y')} Enrolled",
@@ -275,6 +279,10 @@ if month_str != APRIL_MONTH:
               f"{current_pct:.1f}%" if current_pct is not None else "—")
     m4.metric(f"FAM Velocity {today.strftime('%b')}",
               f"{current_velocity:.1f} / day")
+    m5.metric("Velocity Needed to Hit Target",
+              f"{velocity_needed:.1f} / day" if velocity_needed is not None else "—")
+    m6.metric(f"Days Left in {today.strftime('%b')}",
+              f"{days_left}")
 
 # ── FAM Enrollment Detail Tables ─────────────────────────────────────────────
 st.divider()
