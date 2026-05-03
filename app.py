@@ -525,4 +525,3 @@ with st.expander("🔍 View Raw Enrollment Data"):
         use_container_width=True,
     )
     st.caption(f"{len(df_chart):,} records shown (enrollment date ≥ Dec 20, 2025)")
-    
