@@ -22,6 +22,33 @@ MONTHLY_TARGETS = {
 
 FAM_FIELDS = ("enrollmentDate", "companyName", "employeeOrDependent", "gender")
 
+# ── Brand colors ──────────────────────────────────────────────────────────────
+# Purple shades  (#501DCC base)
+C_PURPLE_DEEP   = "#501DCC"
+C_PURPLE_MID    = "#7B51D3"
+C_PURPLE_LIGHT  = "#A67CE0"
+C_PURPLE_PALE   = "#D0B8F0"
+
+# Teal shades  (#2C8A7A base)
+C_TEAL_DEEP     = "#2C8A7A"
+C_TEAL_MID      = "#3EA896"
+C_TEAL_LIGHT    = "#65C4B5"
+C_TEAL_PALE     = "#A3DDD6"
+
+BG_COLOR        = "#FAFAFA"
+
+
+def apply_chart_style(fig):
+    """Apply brand background and grid style to any Plotly figure."""
+    fig.update_layout(
+        plot_bgcolor=BG_COLOR,
+        paper_bgcolor=BG_COLOR,
+        font_color="#333333",
+        xaxis=dict(showgrid=False, linecolor="#DDDDDD"),
+        yaxis=dict(gridcolor="#EEEEEE", linecolor="#DDDDDD"),
+    )
+    return fig
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def get_headers():
     return {"Api-Key": st.secrets["ITERABLE_KEY_DIGBI_HEALTH"]}
@@ -395,11 +422,19 @@ else:
             title="FAM vs. Total PRISM Enrollment Trends",
             labels={"Month": "Month", "Enrollments": "Enrollments"},
             color_discrete_map={
-                "Total PRISM Enrollments": "#4C72B0",
-                "FAM Enrollments":         "#2E8B57",
+                "Total PRISM Enrollments": C_PURPLE_DEEP,
+                "FAM Enrollments":         C_TEAL_DEEP,
             },
             category_orders={"Month": month_order},
+            text_auto=False,
         )
+        fig_compare.update_traces(
+            texttemplate="%{y:,}, %{x}",
+            textposition="outside",
+            textfont_size=10,
+        )
+        fig_compare.update_layout(uniformtext_minsize=8, uniformtext_mode="hide")
+        apply_chart_style(fig_compare)
         st.plotly_chart(fig_compare, use_container_width=True)
 
         # ── FAM % of PRISM line chart ──────────────────────────────────────────
@@ -420,11 +455,18 @@ else:
             labels={"Month": "Month", "FAM %": "FAM % of Total Enrollments"},
             markers=True,
             text="FAM %",
-            color_discrete_sequence=["#E07B39"],
+            color_discrete_sequence=[C_PURPLE_MID],
             category_orders={"Month": pct_order},
         )
-        fig_pct.update_traces(texttemplate="%{text:.1f}%", textposition="top center")
+        fig_pct.update_traces(
+            texttemplate="%{y:.1f}%, %{x}",
+            textposition="top center",
+            textfont_size=10,
+            marker=dict(size=9, color=C_PURPLE_DEEP),
+            line=dict(color=C_PURPLE_MID, width=2),
+        )
         fig_pct.update_yaxes(ticksuffix="%")
+        apply_chart_style(fig_pct)
         st.plotly_chart(fig_pct, use_container_width=True)
 
     # ── Employee vs. Dependent + Gender ───────────────────────────────────────
@@ -442,9 +484,10 @@ else:
                 names="employeeOrDependent",
                 values="enrollments",
                 title="Employee vs. Dependent",
-                color_discrete_sequence=px.colors.qualitative.Safe,
+                color_discrete_sequence=[C_PURPLE_DEEP, C_PURPLE_MID, C_PURPLE_LIGHT, C_PURPLE_PALE],
             )
             fig_emp.update_traces(textinfo="label+percent+value")
+            fig_emp.update_layout(paper_bgcolor=BG_COLOR)
             st.plotly_chart(fig_emp, use_container_width=True)
         else:
             st.info("No employee/dependent data available.")
@@ -461,9 +504,10 @@ else:
                 names="gender",
                 values="enrollments",
                 title="FAM Enrollments by Gender",
-                color_discrete_sequence=px.colors.qualitative.Safe,
+                color_discrete_sequence=[C_TEAL_DEEP, C_TEAL_MID, C_TEAL_LIGHT, C_TEAL_PALE],
             )
             fig_gen.update_traces(textinfo="label+percent+value")
+            fig_gen.update_layout(paper_bgcolor=BG_COLOR)
             st.plotly_chart(fig_gen, use_container_width=True)
         else:
             st.info("No gender data available.")
